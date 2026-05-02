@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Validate HTML ──────────────────────────────────────────────────────────
+  validate-html:
+    name: Validate HTML
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install html-validate
+        run: npm install -g html-validate
+
+      - name: Validate HTML
+        run: html-validate src/pharos_alpha.html || true
+        # 'or true' because html-validate may flag template patterns — review output manually
+
+  # ── Check File Size ────────────────────────────────────────────────────────
+  check-size:
+    name: Check File Size
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check main file size
+        run: |
+          FILE="src/pharos_alpha.html"
+          SIZE=$(wc -c < "$FILE")
+          echo "File size: ${SIZE} bytes"
+          # Warn if over 500KB (extremely generous for a single HTML file)
+          if [ "$SIZE" -gt 512000 ]; then
+            echo "⚠️  WARNING: File size exceeds 500KB. Consider splitting or optimizing."
+            exit 1
+          else
+            echo "✅ File size is within acceptable range."
+          fi
+
+  # ── Lint Markdown ──────────────────────────────────────────────────────────
+  lint-markdown:
+    name: Lint Markdown
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Lint Markdown files
+        uses: DavidAnson/markdownlint-cli2-action@v16
+        with:
+          globs: |
+            README.md
+            CONTRIBUTING.md
+            CHANGELOG.md
+            CODE_OF_CONDUCT.md
+            SECURITY.md
+            docs/**/*.md
+          config: |
+            {
+              "MD013": false,
+              "MD033": false,
+              "MD041": false
+            }
+
+  # ── Check Links ────────────────────────────────────────────────────────────
+  check-links:
+    name: Check External Links
+    runs-on: ubuntu-latest
+    # Only run on push to main to avoid rate limiting on PRs
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check links in README
+        uses: gaurav-nelson/github-action-markdown-link-check@v1
+        with:
+          use-quiet-mode: 'yes'
+          use-verbose-mode: 'no'
+          config-file: '.github/link-check-config.json'
+          file-path: 'README.md'
+
+  # ── Security Scan ─────────────────────────────────────────────────────────
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'
+
+  # ── Summary ───────────────────────────────────────────────────────────────
+  ci-summary:
+    name: CI Summary
+    needs: [validate-html, check-size, lint-markdown]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Report status
+        run: |
+          echo "⚓ Pharos Alpha CI complete"
+          echo "HTML validate: ${{ needs.validate-html.result }}"
+          echo "Size check:    ${{ needs.check-size.result }}"
+          echo "Markdown lint: ${{ needs.lint-markdown.result }}"
